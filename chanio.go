@@ -9,6 +9,7 @@ import (
 const defaultBufSize = 4096
 
 var ErrReadTerminated = errors.New("read terminated")
+var ErrWriteTerminated = errors.New("write terminated")
 
 // Reader implements chan'ing for an io.Reader object.
 type Reader struct {
@@ -17,19 +18,7 @@ type Reader struct {
 	err     error
 	done    chan struct{}
 	ctx     context.Context
-}
-
-func NewReaderSizeContext(rd io.Reader, size int, ctx context.Context) *Reader {
-	r := &Reader{
-		rd:      rd,
-		bufsize: size,
-		ctx:     ctx,
-		done:    make(chan struct{}),
-	}
-
-	r.stopReading()
-
-	return r
+	output  chan []byte
 }
 
 func NewReaderContext(rd io.Reader, ctx context.Context) *Reader {
@@ -44,12 +33,29 @@ func NewReader(rd io.Reader) *Reader {
 	return NewReaderSizeContext(rd, defaultBufSize, context.Background())
 }
 
-func (r *Reader) Read() <-chan []byte {
-	output := make(chan []byte)
+func NewReaderSizeContext(rd io.Reader, size int, ctx context.Context) *Reader {
+	r := &Reader{
+		rd:      rd,
+		bufsize: size,
+		ctx:     ctx,
+		done:    make(chan struct{}),
+		output:  make(chan []byte),
+	}
 
+	r.readLoop()
+	r.stopReading()
+
+	return r
+}
+
+func (r *Reader) Read() <-chan []byte {
+	return r.output
+}
+
+func (r *Reader) readLoop() {
 	go func() {
 		defer close(r.done)
-		defer close(output)
+		defer close(r.output)
 
 		for {
 			buf := make([]byte, r.bufsize)
@@ -67,14 +73,12 @@ func (r *Reader) Read() <-chan []byte {
 			}
 
 			select {
-			case output <- buf:
+			case r.output <- buf:
 			case <-r.ctx.Done():
 				return
 			}
 		}
 	}()
-
-	return output
 }
 
 func (r *Reader) GetError() error {
@@ -96,6 +100,88 @@ func (r *Reader) stopReading() {
 			readCloser.Close()
 
 		case <-r.done:
+		}
+	}()
+}
+
+type Writer struct {
+	wr    io.Writer
+	err   error
+	done  chan struct{}
+	ctx   context.Context
+	input chan []byte
+}
+
+func NewWriterContext(wr io.Writer, ctx context.Context) *Writer {
+	return NewWriterSizeContext(wr, defaultBufSize, ctx)
+}
+
+func NewWriterSize(wr io.Writer, size int) *Writer {
+	return NewWriterSizeContext(wr, size, context.Background())
+}
+
+func NewWriter(wr io.Writer) *Writer {
+	return NewWriterSizeContext(wr, defaultBufSize, context.Background())
+}
+
+func NewWriterSizeContext(wr io.Writer, size int, ctx context.Context) *Writer {
+	w := &Writer{
+		wr:    wr,
+		ctx:   ctx,
+		done:  make(chan struct{}),
+		input: make(chan []byte),
+	}
+
+	w.writeLoop()
+	w.stopWriting()
+
+	return w
+}
+
+func (w *Writer) Write() chan<- []byte {
+	return w.input
+}
+
+func (w *Writer) writeLoop() {
+	go func() {
+		defer close(w.done)
+
+		for {
+			select {
+			case buf, ok := <-w.input:
+				if !ok {
+					return
+				}
+				_, err := w.wr.Write(buf)
+				if err != nil {
+					w.err = err
+				}
+			case <-w.ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func (r *Writer) GetError() error {
+	err := r.err
+	r.err = nil
+	return err
+}
+
+func (w *Writer) stopWriting() {
+	writeCloser, ok := w.wr.(io.WriteCloser)
+	if !ok {
+		return
+	}
+
+	go func() {
+		select {
+		case <-w.ctx.Done():
+			w.err = ErrWriteTerminated
+			writeCloser.Close()
+
+		case <-w.done:
 		}
 	}()
 }
