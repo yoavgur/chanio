@@ -8,16 +8,44 @@ import (
 
 const defaultBufSize = 4096
 
-var ErrReadTerminated = errors.New("read terminated")
-var ErrWriteTerminated = errors.New("write terminated")
+var ErrIOTerminated = errors.New("IO terminated")
+
+type IO struct {
+	err  error
+	done chan struct{}
+	ctx  context.Context
+}
+
+func newIO(ctx context.Context) *IO {
+	return &IO{
+		ctx:  ctx,
+		done: make(chan struct{}),
+	}
+}
+
+func (i *IO) GetError() error {
+	err := i.err
+	i.err = nil
+	return err
+}
+
+func (i *IO) stopIO(closer io.Closer) {
+	go func() {
+		select {
+		case <-i.ctx.Done():
+			i.err = ErrIOTerminated
+			closer.Close()
+
+		case <-i.done:
+		}
+	}()
+}
 
 // Reader implements chan'ing for an io.Reader object.
 type Reader struct {
+	*IO
 	rd      io.Reader
 	bufsize int
-	err     error
-	done    chan struct{}
-	ctx     context.Context
 	output  chan []byte
 }
 
@@ -37,13 +65,16 @@ func NewReaderSizeContext(rd io.Reader, size int, ctx context.Context) *Reader {
 	r := &Reader{
 		rd:      rd,
 		bufsize: size,
-		ctx:     ctx,
-		done:    make(chan struct{}),
+		IO:      newIO(ctx),
 		output:  make(chan []byte),
 	}
 
 	r.readLoop()
-	r.stopReading()
+
+	closer, ok := r.rd.(io.Closer)
+	if ok {
+		r.stopIO(closer)
+	}
 
 	return r
 }
@@ -81,34 +112,9 @@ func (r *Reader) readLoop() {
 	}()
 }
 
-func (r *Reader) GetError() error {
-	err := r.err
-	r.err = nil
-	return err
-}
-
-func (r *Reader) stopReading() {
-	readCloser, ok := r.rd.(io.ReadCloser)
-	if !ok {
-		return
-	}
-
-	go func() {
-		select {
-		case <-r.ctx.Done():
-			r.err = ErrReadTerminated
-			readCloser.Close()
-
-		case <-r.done:
-		}
-	}()
-}
-
 type Writer struct {
+	*IO
 	wr    io.Writer
-	err   error
-	done  chan struct{}
-	ctx   context.Context
 	input chan []byte
 }
 
@@ -127,13 +133,16 @@ func NewWriter(wr io.Writer) *Writer {
 func NewWriterSizeContext(wr io.Writer, size int, ctx context.Context) *Writer {
 	w := &Writer{
 		wr:    wr,
-		ctx:   ctx,
-		done:  make(chan struct{}),
+		IO:    newIO(ctx),
 		input: make(chan []byte),
 	}
 
 	w.writeLoop()
-	w.stopWriting()
+
+	closer, ok := w.wr.(io.Closer)
+	if ok {
+		w.stopIO(closer)
+	}
 
 	return w
 }
@@ -159,29 +168,6 @@ func (w *Writer) writeLoop() {
 			case <-w.ctx.Done():
 				return
 			}
-		}
-	}()
-}
-
-func (r *Writer) GetError() error {
-	err := r.err
-	r.err = nil
-	return err
-}
-
-func (w *Writer) stopWriting() {
-	writeCloser, ok := w.wr.(io.WriteCloser)
-	if !ok {
-		return
-	}
-
-	go func() {
-		select {
-		case <-w.ctx.Done():
-			w.err = ErrWriteTerminated
-			writeCloser.Close()
-
-		case <-w.done:
 		}
 	}()
 }

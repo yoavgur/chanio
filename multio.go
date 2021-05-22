@@ -20,10 +20,10 @@ func NewMultiReader(bufsize int, ctx context.Context, readers ...io.Reader) *Mul
 		output:  make(chan []byte),
 	}
 
-	mr.readers = make([]*Reader, 0)
+	mr.readers = make([]*Reader, len(readers))
 
-	for _, reader := range readers {
-		mr.readers = append(mr.readers, NewReaderSizeContext(reader, bufsize, ctx))
+	for i, reader := range readers {
+		mr.readers[i] = NewReaderSizeContext(reader, bufsize, ctx)
 	}
 
 	mr.readLoop()
