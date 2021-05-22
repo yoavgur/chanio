@@ -1,4 +1,4 @@
-package main
+package chanio
 
 import (
 	"context"
@@ -13,7 +13,19 @@ type MultiReader struct {
 	output  chan []byte
 }
 
-func NewMultiReader(bufsize int, ctx context.Context, readers ...io.Reader) *MultiReader {
+func NewMultiReader(readers ...io.Reader) *MultiReader {
+	return NewMultiReaderSizeContext(defaultBufSize, context.Background(), readers...)
+}
+
+func NewMultiReaderSize(bufSize int, readers ...io.Reader) *MultiReader {
+	return NewMultiReaderSizeContext(bufSize, context.Background(), readers...)
+}
+
+func NewMultiReaderContext(ctx context.Context, readers ...io.Reader) *MultiReader {
+	return NewMultiReaderSizeContext(defaultBufSize, ctx, readers...)
+}
+
+func NewMultiReaderSizeContext(bufsize int, ctx context.Context, readers ...io.Reader) *MultiReader {
 	mr := &MultiReader{
 		bufsize: bufsize,
 		ctx:     ctx,

@@ -1,3 +1,3 @@
-module example.com/shite
+module github.com/yoavgur/chanio
 
 go 1.16

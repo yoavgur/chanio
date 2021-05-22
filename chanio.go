@@ -1,4 +1,4 @@
-package main
+package chanio
 
 import (
 	"context"
@@ -91,7 +91,7 @@ func (r *Reader) readLoop() {
 		for {
 			buf := make([]byte, r.bufsize)
 
-			_, err := r.rd.Read(buf)
+			nb_read, err := r.rd.Read(buf)
 			if err != nil {
 				select {
 				case <-r.ctx.Done():
@@ -104,7 +104,7 @@ func (r *Reader) readLoop() {
 			}
 
 			select {
-			case r.output <- buf:
+			case r.output <- buf[:nb_read]:
 			case <-r.ctx.Done():
 				return
 			}
@@ -118,19 +118,11 @@ type Writer struct {
 	input chan []byte
 }
 
-func NewWriterContext(wr io.Writer, ctx context.Context) *Writer {
-	return NewWriterSizeContext(wr, defaultBufSize, ctx)
-}
-
-func NewWriterSize(wr io.Writer, size int) *Writer {
-	return NewWriterSizeContext(wr, size, context.Background())
-}
-
 func NewWriter(wr io.Writer) *Writer {
-	return NewWriterSizeContext(wr, defaultBufSize, context.Background())
+	return NewWriterContext(wr, context.Background())
 }
 
-func NewWriterSizeContext(wr io.Writer, size int, ctx context.Context) *Writer {
+func NewWriterContext(wr io.Writer, ctx context.Context) *Writer {
 	w := &Writer{
 		wr:    wr,
 		IO:    newIO(ctx),
